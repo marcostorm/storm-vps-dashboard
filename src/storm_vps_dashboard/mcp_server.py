@@ -1,8 +1,8 @@
 """MCP server que expõe operações no VPS Hostinger (Storm Commerce).
 
 Servidor usa a mesma camada SSH (collector.py) do dashboard Streamlit.
-Tools de leitura (health, list, logs) + v1 destrutivas (restart, prune,
-deploy) com confirm=False por padrão retornando dry-run.
+Tools de leitura (health, list, logs, image_tags) + destrutivas (restart,
+prune, deploy, rollback) com confirm=False por padrão retornando dry-run.
 """
 from __future__ import annotations
 
@@ -271,6 +271,113 @@ def vps_deploy_project(loja: str, tag: str = "", confirm: bool = False) -> dict:
             "/opt/stormlab/scripts/deploy.sh",
             args,
             timeout=600,
+        )
+    except (ValueError, RuntimeError) as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def vps_list_image_tags(image: str = "storm-commerce") -> dict:
+    """Lista as tags locais de uma imagem Docker no VPS, ordenadas por
+    nome desc (tags do formato `YYYYMMDD-HHMM` ordenam cronologicamente
+    na prática).
+
+    Use ANTES de `vps_rollback_project` pra escolher uma tag válida.
+
+    Args:
+        image: nome da imagem (default 'storm-commerce').
+
+    Returns:
+        {image, tags: [{tag, created_at, size}, ...]}.
+        Erro: {error}.
+    """
+    try:
+        _validate_tag(image)
+    except ValueError as e:
+        return {"error": str(e)}
+    try:
+        tags = list_image_tags(load_config(), image)
+    except Exception as e:
+        return {"error": f"falha SSH: {e}"}
+    tags.sort(key=lambda t: t["tag"], reverse=True)
+    return {"image": image, "tags": tags}
+
+
+@mcp.tool()
+def vps_rollback_project(loja: str, tag: str, confirm: bool = False) -> dict:
+    """Reverte uma loja Storm Commerce pra uma tag anterior da imagem.
+    Wrapper de `/opt/stormlab/scripts/rollback.sh <loja> <tag>`.
+
+    Sem `confirm=True`, valida que a loja + tag existem e retorna preview.
+
+    Pra descobrir tags disponíveis, chame `vps_list_image_tags()`.
+
+    Args:
+        loja: nome da loja (ex: 'loja-demo'). Deve existir em
+              `/opt/stormlab/lojas/<loja>`.
+        tag: versão da imagem (ex: '20261010-1430'). Deve existir
+             localmente no VPS (`docker images storm-commerce`).
+        confirm: `True` executa; `False` retorna dry-run.
+
+    Returns:
+        Dry-run: {would_do, loja, current_image, target_image, tags_available}.
+        Execução: {rc, output, command}.
+        Erro: {error}.
+    """
+    try:
+        _validate_loja_name(loja)
+        _validate_tag(tag)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    try:
+        cfg = load_config()
+        lojas = list_lojas(cfg)
+        if loja not in lojas:
+            return {
+                "error": f"loja {loja!r} não encontrada em /opt/stormlab/lojas",
+                "available": lojas,
+            }
+
+        tags = list_image_tags(cfg, "storm-commerce")
+        tag_names = {t["tag"] for t in tags}
+        if tag not in tag_names:
+            tags_sorted = sorted(tag_names, reverse=True)
+            return {
+                "error": f"tag {tag!r} não existe localmente no VPS",
+                "available": tags_sorted,
+                "hint": "use vps_list_image_tags() pra ver tags válidas",
+            }
+
+        with _client(cfg) as c:
+            state = container_state(c, f"{loja}-app-1")
+    except Exception as e:
+        return {"error": f"falha SSH: {e}"}
+
+    current_image = state.get("image", "unknown") if "error" not in state else "unknown"
+    target_image = f"storm-commerce:{tag}"
+
+    if current_image == target_image:
+        return {
+            "error": f"loja já está em {target_image} — rollback é no-op",
+            "current_image": current_image,
+        }
+
+    if not confirm:
+        return {
+            "would_do": f"/opt/stormlab/scripts/rollback.sh {loja} {tag}",
+            "loja": loja,
+            "current_image": current_image,
+            "target_image": target_image,
+            "hint": "chame com confirm=True pra executar",
+        }
+
+    try:
+        return run_script(
+            cfg,
+            "/opt/stormlab/scripts/rollback.sh",
+            [loja, tag],
+            timeout=120,
         )
     except (ValueError, RuntimeError) as e:
         return {"error": str(e)}

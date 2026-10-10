@@ -38,17 +38,19 @@ storm-vps-mcp
 - `uptime` — load avg
 - `docker system df` — espaço do Docker
 
-## MCP tools (v1)
+## MCP tools
 
 Leitura:
 - `vps_health()` — snapshot (uptime, mem, disco, docker df, containers)
 - `vps_list_containers()` — `docker ps --all`
 - `vps_container_logs(name, tail=50)` — últimas N linhas
+- `vps_list_image_tags(image="storm-commerce")` — tags locais ordenadas desc
 
 Destrutivas (confirm=False retorna dry-run):
 - `vps_restart_container(name, confirm=False)` — `docker restart`
 - `vps_prune_images(keep_tags=3, confirm=False)` — wrapper de `/opt/stormlab/scripts/prune-images.sh`
 - `vps_deploy_project(loja, tag="", confirm=False)` — wrapper de `/opt/stormlab/scripts/deploy.sh` (backup → build → smoke test → swap → health check → auto-rollback)
+- `vps_rollback_project(loja, tag, confirm=False)` — wrapper de `/opt/stormlab/scripts/rollback.sh`
 
 ## Fora do escopo
 
