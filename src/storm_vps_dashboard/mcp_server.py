@@ -1,7 +1,8 @@
-"""MCP server que expõe operações de leitura do VPS Hostinger (Storm Commerce).
+"""MCP server que expõe operações no VPS Hostinger (Storm Commerce).
 
 Servidor usa a mesma camada SSH (collector.py) do dashboard Streamlit.
-Só tools de LEITURA — nada destrutivo (restart, deploy, prune) na v0.
+Tools de leitura (health, list, logs) + v1 destrutivas (restart, prune,
+deploy) com confirm=False por padrão retornando dry-run.
 """
 from __future__ import annotations
 
@@ -12,6 +13,15 @@ from mcp.server.mcpserver import MCPServer
 from .collector import (
     collect,
     container_logs as _container_logs,
+    container_state,
+    list_image_tags,
+    list_lojas,
+    restart_container,
+    run_script,
+    _client,
+    _validate_container_name,
+    _validate_loja_name,
+    _validate_tag,
 )
 from .config import load_config
 
@@ -106,6 +116,164 @@ def vps_health() -> dict:
             "by_state": by_state,
         },
     }
+
+
+@mcp.tool()
+def vps_restart_container(name: str, confirm: bool = False) -> dict:
+    """Reinicia um container do VPS (`docker restart <name>`).
+
+    Sem `confirm=True`, retorna dry-run com estado atual + comando que
+    seria executado. Chame novamente com `confirm=True` pra executar.
+
+    Args:
+        name: nome exato do container. Alfanumérico + `-_.` apenas.
+        confirm: `True` executa; `False` (default) retorna dry-run.
+
+    Returns:
+        Dry-run: {would_do, current_state, hint}.
+        Execução: {restarted, before: {...}, after: {...}}.
+        Erro: {error}.
+    """
+    try:
+        _validate_container_name(name)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    try:
+        with _client(load_config()) as c:
+            state = container_state(c, name)
+    except Exception as e:
+        return {"error": f"falha SSH: {e}"}
+    if "error" in state:
+        return {"error": f"container não encontrado: {state['error']}"}
+
+    if not confirm:
+        return {
+            "would_do": f"docker restart {name}",
+            "current_state": state,
+            "hint": "chame novamente com confirm=True pra executar",
+        }
+
+    try:
+        return restart_container(load_config(), name)
+    except (ValueError, RuntimeError) as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def vps_prune_images(keep_tags: int = 3, confirm: bool = False) -> dict:
+    """Remove imagens antigas de `storm-commerce` no VPS, mantendo as
+    últimas `keep_tags` tags (ordenadas por data). Wrapper de
+    `/opt/stormlab/scripts/prune-images.sh`.
+
+    Sem `confirm=True`, lista as tags que SERIAM removidas sem executar.
+
+    Args:
+        keep_tags: quantas tags mais recentes manter (1-10, default 3).
+        confirm: `True` executa; `False` retorna dry-run.
+
+    Returns:
+        Dry-run: {would_keep, would_remove, total_tags}.
+        Execução: {rc, output, command}.
+        Erro: {error}.
+    """
+    if not isinstance(keep_tags, int) or keep_tags < 1 or keep_tags > 10:
+        return {"error": "keep_tags deve ser int entre 1 e 10"}
+
+    try:
+        tags = list_image_tags(load_config(), "storm-commerce")
+    except Exception as e:
+        return {"error": f"falha SSH: {e}"}
+
+    non_latest = [t for t in tags if t["tag"] != "latest"]
+    non_latest.sort(key=lambda t: t["tag"], reverse=True)
+    keep = non_latest[:keep_tags]
+    remove = non_latest[keep_tags:]
+
+    if not confirm:
+        return {
+            "would_keep": keep,
+            "would_remove": remove,
+            "total_tags": len(non_latest),
+            "hint": f"chame com confirm=True pra remover {len(remove)} tag(s)",
+        }
+
+    try:
+        return run_script(
+            load_config(),
+            "/opt/stormlab/scripts/prune-images.sh",
+            [str(keep_tags)],
+            timeout=120,
+        )
+    except (ValueError, RuntimeError) as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def vps_deploy_project(loja: str, tag: str = "", confirm: bool = False) -> dict:
+    """Deploy de uma loja Storm Commerce. Wrapper de
+    `/opt/stormlab/scripts/deploy.sh <loja> [tag]`. Fluxo do script:
+    backup do banco → build da imagem → smoke test → swap do container
+    → health check → auto-rollback se falhar.
+
+    Sem `confirm=True`, valida que a loja existe e retorna preview.
+
+    Args:
+        loja: nome da loja (ex: 'loja-demo'). Deve existir em
+              `/opt/stormlab/lojas/<loja>`.
+        tag: versão da imagem (ex: '20261010-1430'). Vazio = timestamp
+             atual gerado pelo script.
+        confirm: `True` executa; `False` retorna dry-run.
+
+    Returns:
+        Dry-run: {would_do, loja, target_tag, current_image, lojas_available}.
+        Execução: {rc, output, command}. Deploy pode levar 2-5min.
+        Erro: {error}.
+    """
+    try:
+        _validate_loja_name(loja)
+        if tag:
+            _validate_tag(tag)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    try:
+        cfg = load_config()
+        lojas = list_lojas(cfg)
+        if loja not in lojas:
+            return {
+                "error": f"loja {loja!r} não encontrada em /opt/stormlab/lojas",
+                "available": lojas,
+            }
+
+        with _client(cfg) as c:
+            state = container_state(c, f"{loja}-app-1")
+    except Exception as e:
+        return {"error": f"falha SSH: {e}"}
+
+    target_tag = tag or "<timestamp-atual>"
+    current_image = state.get("image", "unknown") if "error" not in state else "unknown"
+
+    if not confirm:
+        return {
+            "would_do": f"/opt/stormlab/scripts/deploy.sh {loja} {tag}".strip(),
+            "loja": loja,
+            "target_tag": target_tag,
+            "current_image": current_image,
+            "lojas_available": lojas,
+            "hint": "chame com confirm=True pra executar (pode levar 2-5min)",
+        }
+
+    try:
+        args = [loja] + ([tag] if tag else [])
+        return run_script(
+            cfg,
+            "/opt/stormlab/scripts/deploy.sh",
+            args,
+            timeout=600,
+        )
+    except (ValueError, RuntimeError) as e:
+        return {"error": str(e)}
 
 
 def run() -> None:

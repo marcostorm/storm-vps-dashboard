@@ -38,6 +38,18 @@ storm-vps-mcp
 - `uptime` — load avg
 - `docker system df` — espaço do Docker
 
-## Fora do escopo v0
+## MCP tools (v1)
 
-Histórico/série temporal, alertas, ações (restart), múltiplos VPS, logs streaming.
+Leitura:
+- `vps_health()` — snapshot (uptime, mem, disco, docker df, containers)
+- `vps_list_containers()` — `docker ps --all`
+- `vps_container_logs(name, tail=50)` — últimas N linhas
+
+Destrutivas (confirm=False retorna dry-run):
+- `vps_restart_container(name, confirm=False)` — `docker restart`
+- `vps_prune_images(keep_tags=3, confirm=False)` — wrapper de `/opt/stormlab/scripts/prune-images.sh`
+- `vps_deploy_project(loja, tag="", confirm=False)` — wrapper de `/opt/stormlab/scripts/deploy.sh` (backup → build → smoke test → swap → health check → auto-rollback)
+
+## Fora do escopo
+
+Histórico/série temporal, alertas, múltiplos VPS, logs streaming, deploy async/background.

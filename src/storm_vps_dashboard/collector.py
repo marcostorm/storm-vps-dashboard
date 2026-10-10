@@ -167,8 +167,7 @@ def docker_system_df(c: paramiko.SSHClient) -> DockerSystemDf:
 
 
 def container_logs(cfg: VPSConfig, name: str, tail: int = 50) -> str:
-    if not name.replace("-", "").replace("_", "").replace(".", "").isalnum():
-        raise ValueError(f"nome de container inválido: {name!r}")
+    _validate_container_name(name)
     tail = max(1, min(tail, 2000))
     with _client(cfg) as c:
         stdin, stdout, stderr = c.exec_command(
@@ -179,6 +178,104 @@ def container_logs(cfg: VPSConfig, name: str, tail: int = 50) -> str:
         if rc != 0:
             raise RuntimeError(f"docker logs falhou (rc={rc}): {out.strip()[:500]}")
         return out
+
+
+def _validate_container_name(name: str) -> None:
+    if not name or not name.replace("-", "").replace("_", "").replace(".", "").isalnum():
+        raise ValueError(f"nome de container inválido: {name!r}")
+
+
+def _validate_loja_name(name: str) -> None:
+    if not name or not name.replace("-", "").replace("_", "").isalnum():
+        raise ValueError(f"nome de loja inválido: {name!r}")
+
+
+def _validate_tag(tag: str) -> None:
+    if not tag or not tag.replace("-", "").replace("_", "").replace(".", "").isalnum():
+        raise ValueError(f"tag inválida: {tag!r}")
+
+
+def _exec_capture(c: paramiko.SSHClient, cmd: str, timeout: int) -> tuple[int, str]:
+    stdin, stdout, stderr = c.exec_command(cmd, timeout=timeout)
+    rc = stdout.channel.recv_exit_status()
+    out = stdout.read().decode("utf-8", errors="replace")
+    err = stderr.read().decode("utf-8", errors="replace")
+    combined = out + (f"\n[stderr]\n{err}" if err.strip() else "")
+    return rc, combined
+
+
+def container_state(c: paramiko.SSHClient, name: str) -> dict:
+    """Retorna {state, status, running_for, image} do container ou {error}."""
+    _validate_container_name(name)
+    rc, out = _exec_capture(
+        c,
+        f"docker inspect {name} --format '{{{{.State.Status}}}}|{{{{.State.StartedAt}}}}|{{{{.Config.Image}}}}'",
+        timeout=10,
+    )
+    if rc != 0:
+        return {"error": out.strip()[:300]}
+    parts = out.strip().split("|")
+    return {
+        "state": parts[0] if len(parts) > 0 else "unknown",
+        "started_at": parts[1] if len(parts) > 1 else "",
+        "image": parts[2] if len(parts) > 2 else "",
+    }
+
+
+def restart_container(cfg: VPSConfig, name: str) -> dict:
+    _validate_container_name(name)
+    with _client(cfg) as c:
+        before = container_state(c, name)
+        if "error" in before:
+            raise RuntimeError(f"container não encontrado: {before['error']}")
+        rc, out = _exec_capture(c, f"docker restart {name}", timeout=60)
+        if rc != 0:
+            raise RuntimeError(f"docker restart falhou (rc={rc}): {out.strip()[:300]}")
+        after = container_state(c, name)
+        return {
+            "restarted": name,
+            "before": before,
+            "after": after,
+        }
+
+
+def list_lojas(cfg: VPSConfig) -> list[str]:
+    with _client(cfg) as c:
+        rc, out = _exec_capture(
+            c, "ls -1 /opt/stormlab/lojas 2>/dev/null", timeout=10
+        )
+        if rc != 0:
+            return []
+        return [l.strip() for l in out.splitlines() if l.strip()]
+
+
+def list_image_tags(cfg: VPSConfig, image: str = "storm-commerce") -> list[dict]:
+    _validate_tag(image)
+    with _client(cfg) as c:
+        rc, out = _exec_capture(
+            c,
+            f"docker images {image} --format '{{{{.Tag}}}}|{{{{.CreatedAt}}}}|{{{{.Size}}}}'",
+            timeout=10,
+        )
+        if rc != 0:
+            return []
+        rows: list[dict] = []
+        for line in out.splitlines():
+            parts = line.strip().split("|")
+            if len(parts) >= 3 and parts[0]:
+                rows.append({"tag": parts[0], "created_at": parts[1], "size": parts[2]})
+        return rows
+
+
+def run_script(cfg: VPSConfig, script_path: str, args: list[str], timeout: int) -> dict:
+    """Executa um script shell no VPS e captura output. Timeout em segundos."""
+    for a in args:
+        if not a.replace("-", "").replace("_", "").replace(".", "").isalnum():
+            raise ValueError(f"argumento inválido: {a!r}")
+    cmd = script_path + ("" if not args else " " + " ".join(args))
+    with _client(cfg) as c:
+        rc, out = _exec_capture(c, cmd, timeout=timeout)
+        return {"rc": rc, "output": out, "command": cmd}
 
 
 @dataclass(frozen=True)
