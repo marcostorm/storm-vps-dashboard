@@ -1,0 +1,22 @@
+[project]
+name = "storm-vps-dashboard"
+version = "0.1.0"
+description = "Dashboard local de saúde do VPS Storm Lab (Hostinger). Coleta via SSH, renderiza em Streamlit."
+requires-python = ">=3.12"
+dependencies = [
+    "streamlit>=1.38",
+    "paramiko>=3.5",
+    "python-dotenv>=1.0",
+    "mcp>=2.2",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+storm-vps-dash = "storm_vps_dashboard.app:run"
+storm-vps-mcp = "storm_vps_dashboard.mcp_server:run"
