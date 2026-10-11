@@ -2,7 +2,8 @@
 
 Servidor usa a mesma camada SSH (collector.py) do dashboard Streamlit.
 Tools de leitura (health, list, logs, image_tags) + destrutivas (restart,
-prune, deploy, rollback) com confirm=False por padrão retornando dry-run.
+prune, deploy, rollback) com confirm=False por padrão retornando dry-run,
+e tool aditiva (backup_db) que roda direto.
 """
 from __future__ import annotations
 
@@ -381,6 +382,50 @@ def vps_rollback_project(loja: str, tag: str, confirm: bool = False) -> dict:
         )
     except (ValueError, RuntimeError) as e:
         return {"error": str(e)}
+
+
+@mcp.tool()
+def vps_backup_db(loja: str) -> dict:
+    """Backup pontual do Postgres de uma loja Storm Commerce pro Cloudflare R2.
+    Wrapper de `/opt/stormlab/scripts/backup-db.sh <loja>`. O script já roda
+    automaticamente embutido em `vps_deploy_project`; esta tool expõe o
+    backup ad-hoc (ex: antes de uma mudança manual arriscada).
+
+    Operação aditiva (não destrói estado da loja), por isso roda direto
+    sem `confirm`. Valida que a loja existe em `/opt/stormlab/lojas` antes
+    de disparar.
+
+    Args:
+        loja: nome da loja (ex: 'loja-demo'). Alfanumérico + `-_`.
+
+    Returns:
+        Sucesso: {rc, output, command}. Output traz path local + status do
+        upload R2 conforme o script escreve em stdout.
+        Erro: {error, available?} se loja inválida/inexistente ou SSH falhar.
+    """
+    try:
+        _validate_loja_name(loja)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    try:
+        cfg = load_config()
+        lojas = list_lojas(cfg)
+        if loja not in lojas:
+            return {
+                "error": f"loja {loja!r} não encontrada em /opt/stormlab/lojas",
+                "available": lojas,
+            }
+        return run_script(
+            cfg,
+            "/opt/stormlab/scripts/backup-db.sh",
+            [loja],
+            timeout=300,
+        )
+    except (ValueError, RuntimeError) as e:
+        return {"error": str(e)}
+    except Exception as e:
+        return {"error": f"falha SSH: {e}"}
 
 
 def run() -> None:

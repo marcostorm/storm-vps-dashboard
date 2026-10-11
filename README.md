@@ -52,6 +52,9 @@ Destrutivas (confirm=False retorna dry-run):
 - `vps_deploy_project(loja, tag="", confirm=False)` — wrapper de `/opt/stormlab/scripts/deploy.sh` (backup → build → smoke test → swap → health check → auto-rollback)
 - `vps_rollback_project(loja, tag, confirm=False)` — wrapper de `/opt/stormlab/scripts/rollback.sh`
 
+Aditivas (rodam direto, sem confirm):
+- `vps_backup_db(loja)` — wrapper de `/opt/stormlab/scripts/backup-db.sh` (pg_dump + upload Cloudflare R2)
+
 ## Fora do escopo
 
 Histórico/série temporal, alertas, múltiplos VPS, logs streaming, deploy async/background.
