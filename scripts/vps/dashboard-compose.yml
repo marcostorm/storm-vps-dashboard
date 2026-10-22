@@ -24,4 +24,4 @@ services:
 networks:
   traefik_proxy:
     external: true
-    name: ${TRAEFIK_NETWORK_NAME:-traefik_proxy}
+    name: ${TRAEFIK_NETWORK_NAME:-stormlab}

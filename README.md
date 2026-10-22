@@ -61,7 +61,7 @@ Opcional: subir o próprio dashboard no VPS pra ficar sempre on, atrás do Traef
 
 **Pré-requisitos no VPS:**
 - Docker + docker compose
-- Traefik existente com network externa (default `traefik_proxy`; ajustar `TRAEFIK_NETWORK_NAME` no `.env` se outro nome)
+- Traefik existente com network externa (default `stormlab`; ajustar `TRAEFIK_NETWORK_NAME` no `.env` se outro nome)
 - A record DNS: `lab.marcostorm.com.br` → `187.127.249.58`
 
 **Setup inicial (uma vez):**
