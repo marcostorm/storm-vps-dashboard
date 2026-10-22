@@ -73,17 +73,13 @@ echo "   ✓ Imagem construída"
 echo ""
 
 # ─── 3. Smoke test ────────────────────────────────────────────────────────────
+# Checa sintaxe do binário CLI do Evershop (ponto de entrada do `evershop start`).
+# No Evershop 2.x o pacote é ESM e a entry é `evershop.js`, não `server.js`.
 echo "3/5 Smoke test (container efêmero)..."
-TEST_RESULT=$(docker run --rm \
-  --entrypoint sh \
-  "${IMAGE}:${TAG}" \
-  -c "node -e \"require('/app/node_modules/@evershop/evershop/dist/bin/lib/app.js')\" 2>&1 | head -3" 2>&1 || true)
-
-# Verifica se a imagem pelo menos inicia o Node sem erro de sintaxe
 docker run --rm \
   --entrypoint node \
   "${IMAGE}:${TAG}" \
-  --check /app/node_modules/@evershop/evershop/dist/bin/server.js 2>/dev/null \
+  --check /app/node_modules/@evershop/evershop/dist/bin/evershop.js 2>/dev/null \
   || { echo "   ❌ Smoke test falhou — deploy abortado"; docker rmi "${IMAGE}:${TAG}" 2>/dev/null; exit 1; }
 
 echo "   ✓ Imagem válida"
