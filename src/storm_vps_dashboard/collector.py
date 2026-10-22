@@ -195,6 +195,11 @@ def _validate_tag(tag: str) -> None:
         raise ValueError(f"tag inválida: {tag!r}")
 
 
+def _validate_run_id(run_id: str) -> None:
+    if not run_id or not run_id.replace("-", "").replace("_", "").isalnum():
+        raise ValueError(f"run_id inválido: {run_id!r}")
+
+
 def _exec_capture(c: paramiko.SSHClient, cmd: str, timeout: int) -> tuple[int, str]:
     stdin, stdout, stderr = c.exec_command(cmd, timeout=timeout)
     rc = stdout.channel.recv_exit_status()
@@ -276,6 +281,163 @@ def run_script(cfg: VPSConfig, script_path: str, args: list[str], timeout: int) 
     with _client(cfg) as c:
         rc, out = _exec_capture(c, cmd, timeout=timeout)
         return {"rc": rc, "output": out, "command": cmd}
+
+
+RUNS_ROOT = "/opt/stormlab/runs"
+DEPLOY_ASYNC = "/opt/stormlab/scripts/deploy-async.sh"
+
+
+def _gen_run_id(loja: str) -> str:
+    from datetime import datetime
+    return f"deploy-{loja}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
+
+def deploy_project_async(cfg: VPSConfig, loja: str, tag: str = "") -> dict:
+    """Dispara deploy.sh em background no VPS via deploy-async.sh.
+
+    Retorna {run_id, pid} na hora. Deploy continua rodando desatachado;
+    acompanhe com get_run_status(cfg, run_id).
+    """
+    _validate_loja_name(loja)
+    if tag:
+        _validate_tag(tag)
+    run_id = _gen_run_id(loja)
+    tag_arg = tag if tag else "-"
+    cmd = f"{DEPLOY_ASYNC} {loja} {tag_arg} {run_id}"
+    with _client(cfg) as c:
+        rc, out = _exec_capture(c, cmd, timeout=15)
+    if rc != 0:
+        raise RuntimeError(f"deploy-async.sh falhou (rc={rc}): {out.strip()[:300]}")
+
+    pid = None
+    for line in out.splitlines():
+        if line.startswith("run_id="):
+            for part in line.split():
+                if part.startswith("pid="):
+                    try:
+                        pid = int(part.split("=", 1)[1])
+                    except ValueError:
+                        pass
+            break
+    return {"run_id": run_id, "pid": pid, "command": cmd}
+
+
+_RUN_FIELD_SEP = "::FILE:"
+_RUN_FIELDS = ("state", "pid", "started_at", "ended_at", "rc", "cmd")
+
+
+def get_run_status(cfg: VPSConfig, run_id: str, tail: int = 200) -> dict:
+    """Lê estado + tail do output.log de um run em /opt/stormlab/runs/<run_id>/.
+
+    Retorna {run_id, state, pid, started_at, ended_at, rc, cmd, output_tail,
+    output_lines_total, exists}. Se o run não existir, {exists: False}.
+    """
+    _validate_run_id(run_id)
+    tail = max(1, min(int(tail), 5000))
+    run_dir = f"{RUNS_ROOT}/{run_id}"
+    # Script bash inline com separador único por arquivo.
+    reader = (
+        f'set -e; d={run_dir}; '
+        f'if [ ! -d "$d" ]; then echo "{_RUN_FIELD_SEP}MISSING::"; exit 0; fi; '
+        + "; ".join(
+            f'echo "{_RUN_FIELD_SEP}{f}::"; cat "$d/{f}" 2>/dev/null || true'
+            for f in _RUN_FIELDS
+        )
+        + f'; echo "{_RUN_FIELD_SEP}output::"; tail -n {tail} "$d/output.log" 2>/dev/null || true'
+        + f'; echo "{_RUN_FIELD_SEP}lines::"; wc -l < "$d/output.log" 2>/dev/null || echo 0'
+    )
+    with _client(cfg) as c:
+        rc, out = _exec_capture(c, reader, timeout=20)
+    if rc != 0:
+        raise RuntimeError(f"leitura do run falhou (rc={rc}): {out.strip()[:300]}")
+
+    if f"{_RUN_FIELD_SEP}MISSING::" in out:
+        return {"run_id": run_id, "exists": False}
+
+    chunks: dict[str, str] = {}
+    current: str | None = None
+    buf: list[str] = []
+    for line in out.splitlines():
+        if line.startswith(_RUN_FIELD_SEP) and line.endswith("::"):
+            if current is not None:
+                chunks[current] = "\n".join(buf).rstrip("\n")
+            current = line[len(_RUN_FIELD_SEP):-2]
+            buf = []
+        else:
+            buf.append(line)
+    if current is not None:
+        chunks[current] = "\n".join(buf).rstrip("\n")
+
+    def _opt_int(s: str) -> int | None:
+        s = s.strip()
+        if not s:
+            return None
+        try:
+            return int(s)
+        except ValueError:
+            return None
+
+    return {
+        "run_id": run_id,
+        "exists": True,
+        "state": chunks.get("state", "").strip() or "unknown",
+        "pid": _opt_int(chunks.get("pid", "")),
+        "started_at": chunks.get("started_at", "").strip() or None,
+        "ended_at": chunks.get("ended_at", "").strip() or None,
+        "rc": _opt_int(chunks.get("rc", "")),
+        "cmd": chunks.get("cmd", "").strip() or None,
+        "output_tail": chunks.get("output", ""),
+        "output_lines_total": _opt_int(chunks.get("lines", "")) or 0,
+    }
+
+
+def list_runs(
+    cfg: VPSConfig, limit: int = 20, state_filter: str | None = None
+) -> list[dict]:
+    """Lista runs ordenados por mtime desc. state_filter: running|ok|failed."""
+    limit = max(1, min(int(limit), 200))
+    if state_filter and state_filter not in {"running", "ok", "failed"}:
+        raise ValueError(f"state_filter inválido: {state_filter!r}")
+    # Para cada subdir, serializa linha única: id|state|started|ended|rc
+    reader = (
+        f'set -e; cd {RUNS_ROOT} 2>/dev/null || exit 0; '
+        f'for d in $(ls -1t 2>/dev/null | head -n {limit}); do '
+        f'  [ -d "$d" ] || continue; '
+        f'  s=$(cat "$d/state" 2>/dev/null); '
+        f'  st=$(cat "$d/started_at" 2>/dev/null); '
+        f'  et=$(cat "$d/ended_at" 2>/dev/null); '
+        f'  rc=$(cat "$d/rc" 2>/dev/null); '
+        f'  echo "$d|$s|$st|$et|$rc"; '
+        f'done'
+    )
+    with _client(cfg) as c:
+        rc, out = _exec_capture(c, reader, timeout=15)
+    if rc != 0:
+        raise RuntimeError(f"list_runs falhou (rc={rc}): {out.strip()[:300]}")
+
+    rows: list[dict] = []
+    for line in out.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) < 5 or not parts[0]:
+            continue
+        state = parts[1] or "unknown"
+        if state_filter and state != state_filter:
+            continue
+        rc_str = parts[4].strip()
+        try:
+            rc_val: int | None = int(rc_str) if rc_str else None
+        except ValueError:
+            rc_val = None
+        rows.append(
+            {
+                "run_id": parts[0],
+                "state": state,
+                "started_at": parts[2] or None,
+                "ended_at": parts[3] or None,
+                "rc": rc_val,
+            }
+        )
+    return rows
 
 
 @dataclass(frozen=True)

@@ -15,13 +15,17 @@ from .collector import (
     collect,
     container_logs as _container_logs,
     container_state,
+    deploy_project_async,
+    get_run_status,
     list_image_tags,
     list_lojas,
+    list_runs,
     restart_container,
     run_script,
     _client,
     _validate_container_name,
     _validate_loja_name,
+    _validate_run_id,
     _validate_tag,
 )
 from .config import load_config
@@ -211,7 +215,9 @@ def vps_prune_images(keep_tags: int = 3, confirm: bool = False) -> dict:
 
 
 @mcp.tool()
-def vps_deploy_project(loja: str, tag: str = "", confirm: bool = False) -> dict:
+def vps_deploy_project(
+    loja: str, tag: str = "", confirm: bool = False, background: bool = False
+) -> dict:
     """Deploy de uma loja Storm Commerce. Wrapper de
     `/opt/stormlab/scripts/deploy.sh <loja> [tag]`. Fluxo do script:
     backup do banco → build da imagem → smoke test → swap do container
@@ -219,16 +225,26 @@ def vps_deploy_project(loja: str, tag: str = "", confirm: bool = False) -> dict:
 
     Sem `confirm=True`, valida que a loja existe e retorna preview.
 
+    Modos de execução (`confirm=True`):
+    - `background=False` (default): roda síncrono até 600s. Útil pra
+      deploys curtos ou quando se quer o output completo de volta.
+    - `background=True`: dispara `deploy-async.sh` no VPS que daemoniza
+      o deploy e retorna `run_id` + `pid` na hora. Acompanhe com
+      `vps_run_status(run_id)` e liste com `vps_list_runs()`.
+
     Args:
         loja: nome da loja (ex: 'loja-demo'). Deve existir em
               `/opt/stormlab/lojas/<loja>`.
         tag: versão da imagem (ex: '20261010-1430'). Vazio = timestamp
              atual gerado pelo script.
-        confirm: `True` executa; `False` retorna dry-run.
+        confirm: `True` executa; `False` (default) retorna dry-run.
+        background: `True` dispara async e retorna imediatamente.
 
     Returns:
-        Dry-run: {would_do, loja, target_tag, current_image, lojas_available}.
-        Execução: {rc, output, command}. Deploy pode levar 2-5min.
+        Dry-run: {would_do, loja, target_tag, current_image, lojas_available,
+                  background}.
+        Síncrono: {rc, output, command}.
+        Async: {run_id, pid, command, hint}.
         Erro: {error}.
     """
     try:
@@ -256,14 +272,37 @@ def vps_deploy_project(loja: str, tag: str = "", confirm: bool = False) -> dict:
     current_image = state.get("image", "unknown") if "error" not in state else "unknown"
 
     if not confirm:
+        if background:
+            would_do = (
+                f"/opt/stormlab/scripts/deploy-async.sh {loja} "
+                f"{tag or '-'} deploy-{loja}-<timestamp>"
+            )
+            hint = (
+                "chame com confirm=True pra disparar; retorna run_id em segundos "
+                "e deploy continua rodando desatachado"
+            )
+        else:
+            would_do = f"/opt/stormlab/scripts/deploy.sh {loja} {tag}".strip()
+            hint = "chame com confirm=True pra executar síncrono (2-5min)"
         return {
-            "would_do": f"/opt/stormlab/scripts/deploy.sh {loja} {tag}".strip(),
+            "would_do": would_do,
             "loja": loja,
             "target_tag": target_tag,
             "current_image": current_image,
             "lojas_available": lojas,
-            "hint": "chame com confirm=True pra executar (pode levar 2-5min)",
+            "background": background,
+            "hint": hint,
         }
+
+    if background:
+        try:
+            result = deploy_project_async(cfg, loja, tag)
+            result["hint"] = (
+                f"acompanhe com vps_run_status(run_id={result['run_id']!r})"
+            )
+            return result
+        except (ValueError, RuntimeError) as e:
+            return {"error": str(e)}
 
     try:
         args = [loja] + ([tag] if tag else [])
@@ -422,6 +461,63 @@ def vps_backup_db(loja: str) -> dict:
             [loja],
             timeout=300,
         )
+    except (ValueError, RuntimeError) as e:
+        return {"error": str(e)}
+    except Exception as e:
+        return {"error": f"falha SSH: {e}"}
+
+
+@mcp.tool()
+def vps_run_status(run_id: str, tail: int = 200) -> dict:
+    """Estado + últimas N linhas de output de um deploy async disparado
+    com `vps_deploy_project(..., background=True)`. Lê
+    `/opt/stormlab/runs/<run_id>/`.
+
+    Chame esta tool várias vezes pra acompanhar o progresso. Enquanto
+    `state == "running"`, o deploy ainda está rodando no VPS.
+
+    Args:
+        run_id: id retornado por `vps_deploy_project(background=True)`.
+                Alfanumérico + `-_`.
+        tail: últimas N linhas do output.log a retornar (1-5000, default 200).
+
+    Returns:
+        {run_id, exists, state ('running'|'ok'|'failed'|'unknown'),
+         pid, started_at, ended_at, rc, cmd, output_tail,
+         output_lines_total}.
+        Se o run não existe: {run_id, exists: False}.
+        Erro: {error}.
+    """
+    try:
+        _validate_run_id(run_id)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    try:
+        return get_run_status(load_config(), run_id, tail=tail)
+    except (ValueError, RuntimeError) as e:
+        return {"error": str(e)}
+    except Exception as e:
+        return {"error": f"falha SSH: {e}"}
+
+
+@mcp.tool()
+def vps_list_runs(limit: int = 20, state: str = "") -> dict:
+    """Lista deploys async recentes (dir `/opt/stormlab/runs/`), mais
+    novos primeiro (por mtime do diretório).
+
+    Args:
+        limit: nº máximo de runs (1-200, default 20).
+        state: filtra por estado — 'running', 'ok' ou 'failed'. Vazio = todos.
+
+    Returns:
+        {runs: [{run_id, state, started_at, ended_at, rc}, ...], total}.
+        Erro: {error}.
+    """
+    state_filter = state.strip() or None
+    try:
+        runs = list_runs(load_config(), limit=limit, state_filter=state_filter)
+        return {"runs": runs, "total": len(runs)}
     except (ValueError, RuntimeError) as e:
         return {"error": str(e)}
     except Exception as e:
