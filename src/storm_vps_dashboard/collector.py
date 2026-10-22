@@ -59,12 +59,15 @@ class DockerSystemDf:
 @contextmanager
 def _client(cfg: VPSConfig) -> Iterator[paramiko.SSHClient]:
     c = paramiko.SSHClient()
-    known_hosts = Path("~/.ssh/known_hosts").expanduser()
-    if known_hosts.exists():
-        c.load_host_keys(str(known_hosts))
-    if os.environ.get("VPS_SKIP_HOST_KEY_CHECK") == "1":
+    skip_host_key = os.environ.get("VPS_SKIP_HOST_KEY_CHECK") == "1"
+    if skip_host_key:
+        # Não carrega known_hosts: AutoAddPolicy só adiciona em memória,
+        # não tenta gravar em disco (que pode ser read-only no container).
         c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     else:
+        known_hosts = Path("~/.ssh/known_hosts").expanduser()
+        if known_hosts.exists():
+            c.load_host_keys(str(known_hosts))
         c.set_missing_host_key_policy(paramiko.RejectPolicy())
     c.connect(
         hostname=cfg.host,
