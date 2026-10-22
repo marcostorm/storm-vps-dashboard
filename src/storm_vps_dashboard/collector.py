@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,7 +62,10 @@ def _client(cfg: VPSConfig) -> Iterator[paramiko.SSHClient]:
     known_hosts = Path("~/.ssh/known_hosts").expanduser()
     if known_hosts.exists():
         c.load_host_keys(str(known_hosts))
-    c.set_missing_host_key_policy(paramiko.RejectPolicy())
+    if os.environ.get("VPS_SKIP_HOST_KEY_CHECK") == "1":
+        c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    else:
+        c.set_missing_host_key_policy(paramiko.RejectPolicy())
     c.connect(
         hostname=cfg.host,
         port=cfg.port,
