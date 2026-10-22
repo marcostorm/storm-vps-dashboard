@@ -14,12 +14,13 @@ services:
       - traefik_proxy
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.dashboard.rule=Host(`${DASHBOARD_DOMAIN}`)"
-      - "traefik.http.routers.dashboard.entrypoints=websecure"
-      - "traefik.http.routers.dashboard.tls.certresolver=le"
-      - "traefik.http.routers.dashboard.middlewares=dashboard-auth"
-      - "traefik.http.middlewares.dashboard-auth.basicauth.users=${TRAEFIK_BASIC_AUTH_USERS}"
-      - "traefik.http.services.dashboard.loadbalancer.server.port=8501"
+      - "traefik.http.routers.stormvps-dashboard.rule=Host(`${DASHBOARD_DOMAIN}`)"
+      - "traefik.http.routers.stormvps-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.stormvps-dashboard.tls=true"
+      - "traefik.http.routers.stormvps-dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.stormvps-dashboard.middlewares=stormvps-dashboard-auth"
+      - "traefik.http.middlewares.stormvps-dashboard-auth.basicauth.users=${TRAEFIK_BASIC_AUTH_USERS}"
+      - "traefik.http.services.stormvps-dashboard.loadbalancer.server.port=8501"
 
 networks:
   traefik_proxy:
