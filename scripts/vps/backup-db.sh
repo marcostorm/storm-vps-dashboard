@@ -67,8 +67,46 @@ for loja_dir in "${LOJAS_DIR}"/*/; do
   find "$BACKUP_DIR" -name "daily-*.sql.gz" -mtime +${RETENTION_DAYS} -delete
 done
 
+# storm-agents: DB do lab (não é loja, mas é crítico pros runs/alerts do watchdog).
+# Lê POSTGRES_DB/POSTGRES_USER do .env; bucket R2 compartilhado com lojas, prefixo próprio.
+AGENTS_DIR="/opt/stormlab/storm-agents"
+AGENTS_CONTAINER="storm-agents-postgres"
+AGENTS_PROJECT="storm-agents"
+AGENTS_BUCKET="storm-backups"
+
+if docker ps --format "{{.Names}}" | grep -q "^${AGENTS_CONTAINER}$" && [[ -f "${AGENTS_DIR}/.env" ]]; then
+  AGENTS_DB=$(grep "^POSTGRES_DB=" "${AGENTS_DIR}/.env" | cut -d= -f2 | tr -d '"')
+  AGENTS_USER=$(grep "^POSTGRES_USER=" "${AGENTS_DIR}/.env" | cut -d= -f2 | tr -d '"')
+  BACKUP_DIR="${BACKUP_BASE}/${AGENTS_PROJECT}"
+  mkdir -p "$BACKUP_DIR"
+  BACKUP_FILE="${BACKUP_DIR}/daily-${DATE}.sql.gz"
+
+  if docker exec "$AGENTS_CONTAINER" pg_dump -U "$AGENTS_USER" "$AGENTS_DB" \
+      | gzip > "$BACKUP_FILE" 2>/dev/null; then
+    SIZE=$(du -sh "$BACKUP_FILE" | cut -f1)
+    echo "✓ ${AGENTS_PROJECT}: backup local (${SIZE})"
+
+    if command -v rclone &>/dev/null; then
+      if rclone copy "$BACKUP_FILE" "r2:${AGENTS_BUCKET}/${AGENTS_PROJECT}/" 2>/dev/null; then
+        echo "✓ ${AGENTS_PROJECT}: upload R2 ok"
+      else
+        echo "⚠ ${AGENTS_PROJECT}: upload R2 falhou (backup local mantido)"
+        ERRORS=$((ERRORS + 1))
+      fi
+    fi
+  else
+    echo "❌ ${AGENTS_PROJECT}: falha no backup"
+    rm -f "$BACKUP_FILE"
+    ERRORS=$((ERRORS + 1))
+  fi
+
+  find "$BACKUP_DIR" -name "daily-*.sql.gz" -mtime +${RETENTION_DAYS} -delete
+else
+  echo "⚠ ${AGENTS_PROJECT}: container ou .env ausente, pulando (não é erro)"
+fi
+
 # Sumário
 TOTAL=$(find "$BACKUP_BASE" -name "daily-${DATE}.sql.gz" | wc -l)
 echo ""
-echo "Backup concluído: ${TOTAL} loja(s), ${ERRORS} erro(s)"
+echo "Backup concluído: ${TOTAL} dump(s), ${ERRORS} erro(s)"
 [[ $ERRORS -gt 0 ]] && exit 1 || exit 0
