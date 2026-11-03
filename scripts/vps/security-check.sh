@@ -6,7 +6,7 @@
 set -euo pipefail
 
 # ─── Baselines (atualizar manualmente quando mudar config legítima) ───────────
-EXPECTED_AUTHKEYS_HASH="744f6f479d449ed0ea39f6514710c49d3b07bf86d8ad78ab9df944a844ef9c64"
+EXPECTED_AUTHKEYS_HASH="ad8de4e5db38f8f70085bfe7edbb0b357591abc47726695ee2b9bc7f5cdfd64b"
 EXPECTED_UFW_RULES=("22/tcp" "80/tcp" "443/tcp")
 EXPECTED_PUBLIC_PORTS=("22" "80" "443")
 EXPECTED_SSHD_CONFIG=(
