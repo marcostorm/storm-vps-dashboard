@@ -6,8 +6,14 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    # Chave e known_hosts chegam em /secrets/ (owner root:root 0600 preservado do host).
+    # O entrypoint do container copia pra /home/app/.ssh/ com owner app antes de dropar privilégio.
+    # NÃO montamos /root/.ssh inteiro (evita expor authorized_keys, chave pública, backups).
     volumes:
-      - /root/.ssh:/root/.ssh:ro
+      - /root/.ssh/id_ed25519:/secrets/id_ed25519:ro
+      - /root/.ssh/known_hosts:/secrets/known_hosts:ro
+    environment:
+      VPS_KEY_PATH: /home/app/.ssh/id_ed25519
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
