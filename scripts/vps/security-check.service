@@ -1,0 +1,12 @@
+[Unit]
+Description=Storm Lab weekly security check (config drift + regressions)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/stormlab/scripts/security-check.sh
+StandardOutput=append:/var/log/storm-security.log
+StandardError=append:/var/log/storm-security.log
+Nice=10
+IOSchedulingClass=idle

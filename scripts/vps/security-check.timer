@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly Storm Lab security check (Mon 05:00 BRT)
+Documentation=https://github.com/marcostorm/storm-vps-dashboard
+
+[Timer]
+OnCalendar=Mon 05:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=security-check.service
+
+[Install]
+WantedBy=timers.target
