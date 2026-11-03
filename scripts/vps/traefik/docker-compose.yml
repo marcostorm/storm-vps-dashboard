@@ -1,0 +1,58 @@
+services:
+  # Docker API read-only proxy (defense-in-depth).
+  # Traefik passa a consultar aqui em vez de ter acesso direto ao socket:
+  # RCE no Traefik vira acesso limitado a GET containers/networks, não root no host.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3
+    container_name: docker-socket-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      NETWORKS: 1
+      SERVICES: 0
+      TASKS: 0
+      POST: 0  # read-only (bloqueia POST/DELETE/PUT)
+      LOG_LEVEL: warning
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-proxy
+    security_opt:
+      - no-new-privileges:true
+
+  traefik:
+    image: traefik:v2.11
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      # Troca o endpoint default (unix:///var/run/docker.sock) pelo proxy.
+      TRAEFIK_PROVIDERS_DOCKER_ENDPOINT: tcp://docker-socket-proxy:2375
+    volumes:
+      - ./traefik.yml:/traefik.yml:ro
+      - ./acme.json:/acme.json
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.dashboard.rule=Host(`traefik.marcostorm.com.br`)
+      - traefik.http.routers.dashboard.entrypoints=websecure
+      - traefik.http.routers.dashboard.tls.certresolver=letsencrypt
+      - traefik.http.routers.dashboard.service=api@internal
+      - traefik.http.routers.dashboard.middlewares=auth
+      # Hash SHA1 do basic auth do dashboard Traefik vive no .env do VPS, não aqui.
+      # Formato: TRAEFIK_DASHBOARD_AUTH=admin:{SHA}<hash>
+      # Gerar: printf "senha" | openssl dgst -sha1 -binary | base64 -w0 && echo
+      - traefik.http.middlewares.auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH}
+    networks:
+      - stormlab
+      - docker-proxy
+    depends_on:
+      - docker-socket-proxy
+
+networks:
+  stormlab:
+    external: true
+  docker-proxy:
+    name: traefik-docker-proxy
+    driver: bridge
+    internal: true  # sem acesso à internet; só comunicação proxy ↔ Traefik
