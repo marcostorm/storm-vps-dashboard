@@ -14,8 +14,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install storm-mcp-common (cross-repo dep)
-        run: pip install git+https://github.com/marcostorm/storm-mcp-common.git@main
+      - name: Install storm-mcp-common (pinned tag)
+        run: pip install git+https://github.com/marcostorm/storm-mcp-common.git@v0.1.0
       - run: pip install -e '.[dev]' ruff
       - run: ruff check src tests
       - run: pytest -v
