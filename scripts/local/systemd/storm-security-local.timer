@@ -1,0 +1,11 @@
+[Unit]
+Description=Executa storm-security-local semanalmente (Seg 09:00)
+
+[Timer]
+OnCalendar=Mon 09:00:00
+Persistent=true
+AccuracySec=5m
+Unit=storm-security-local.service
+
+[Install]
+WantedBy=timers.target

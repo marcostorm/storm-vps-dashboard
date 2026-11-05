@@ -1,0 +1,9 @@
+[Unit]
+Description=Storm Lab workstation security check (vigia semanal local)
+After=default.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/workspace/storm-vps-dashboard/scripts/local/security-check-local.sh
+StandardOutput=append:%h/.local/state/storm-security-local.log
+StandardError=append:%h/.local/state/storm-security-local.log
