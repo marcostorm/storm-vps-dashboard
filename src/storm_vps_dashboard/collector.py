@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 import paramiko
 from storm_mcp_common.validators import (
     validate_container_name as _validate_container_name,
+)
+from storm_mcp_common.validators import (
     validate_loja_name as _validate_loja_name,
+)
+from storm_mcp_common.validators import (
     validate_run_id as _validate_run_id,
+)
+from storm_mcp_common.validators import (
     validate_tag as _validate_tag,
 )
 
@@ -244,7 +250,7 @@ def list_lojas(cfg: VPSConfig) -> list[str]:
         )
         if rc != 0:
             return []
-        return [l.strip() for l in out.splitlines() if l.strip()]
+        return [line.strip() for line in out.splitlines() if line.strip()]
 
 
 def list_image_tags(cfg: VPSConfig, image: str = "storm-commerce") -> list[dict]:

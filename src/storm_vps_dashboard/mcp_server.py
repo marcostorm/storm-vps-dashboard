@@ -12,8 +12,12 @@ from dataclasses import asdict
 from mcp.server.mcpserver import MCPServer
 
 from .collector import (
+    _client,
+    _validate_container_name,
+    _validate_loja_name,
+    _validate_run_id,
+    _validate_tag,
     collect,
-    container_logs as _container_logs,
     container_state,
     deploy_project_async,
     get_run_status,
@@ -22,14 +26,11 @@ from .collector import (
     list_runs,
     restart_container,
     run_script,
-    _client,
-    _validate_container_name,
-    _validate_loja_name,
-    _validate_run_id,
-    _validate_tag,
+)
+from .collector import (
+    container_logs as _container_logs,
 )
 from .config import load_config
-
 
 mcp = MCPServer("storm-vps")
 
