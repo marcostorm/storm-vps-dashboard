@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Iterator
 
 import paramiko
+from storm_mcp_common.validators import (
+    validate_container_name as _validate_container_name,
+    validate_loja_name as _validate_loja_name,
+    validate_run_id as _validate_run_id,
+    validate_tag as _validate_tag,
+)
 
 from .config import VPSConfig
 
@@ -185,26 +191,6 @@ def container_logs(cfg: VPSConfig, name: str, tail: int = 50) -> str:
         if rc != 0:
             raise RuntimeError(f"docker logs falhou (rc={rc}): {out.strip()[:500]}")
         return out
-
-
-def _validate_container_name(name: str) -> None:
-    if not name or not name.replace("-", "").replace("_", "").replace(".", "").isalnum():
-        raise ValueError(f"nome de container inválido: {name!r}")
-
-
-def _validate_loja_name(name: str) -> None:
-    if not name or not name.replace("-", "").replace("_", "").isalnum():
-        raise ValueError(f"nome de loja inválido: {name!r}")
-
-
-def _validate_tag(tag: str) -> None:
-    if not tag or not tag.replace("-", "").replace("_", "").replace(".", "").isalnum():
-        raise ValueError(f"tag inválida: {tag!r}")
-
-
-def _validate_run_id(run_id: str) -> None:
-    if not run_id or not run_id.replace("-", "").replace("_", "").isalnum():
-        raise ValueError(f"run_id inválido: {run_id!r}")
 
 
 def _exec_capture(c: paramiko.SSHClient, cmd: str, timeout: int) -> tuple[int, str]:

@@ -137,7 +137,7 @@ check_trivial_passwords_in_compose() {
     "$WORKSPACE"/*/docker-compose*.yml 2>/dev/null | head -5 || true)
   if [[ -n "$hits" ]]; then
     while IFS= read -r f; do
-      WARNINGS+=("Senha trivial em compose: ${f#$HOME/}")
+      WARNINGS+=("Senha trivial em compose: ${f#"$HOME"/}")
     done <<< "$hits"
   fi
   return 0
@@ -149,7 +149,7 @@ check_env_perms_local() {
   offenders=$(find "$WORKSPACE" -maxdepth 3 -name '.env' -type f ! -perm 600 ! -perm 400 2>/dev/null | head -10 || true)
   if [[ -n "$offenders" ]]; then
     while IFS= read -r f; do
-      WARNINGS+=(".env com perm != 0600/0400: ${f#$HOME/}")
+      WARNINGS+=(".env com perm != 0600/0400: ${f#"$HOME"/}")
     done <<< "$offenders"
   fi
   return 0
