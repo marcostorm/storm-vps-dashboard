@@ -1,0 +1,10 @@
+[Unit]
+Description=Docker cleanup — prune build cache (>7d) e imagens dangling
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'echo "=== $(date -Iseconds) docker-cleanup ==="; docker builder prune -f --filter until=168h; docker image prune -f; docker system df'
+StandardOutput=append:/var/log/docker-cleanup.log
+StandardError=append:/var/log/docker-cleanup.log
