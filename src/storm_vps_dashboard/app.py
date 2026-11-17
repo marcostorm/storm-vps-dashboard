@@ -6,7 +6,7 @@ from datetime import datetime
 import streamlit as st
 
 from storm_vps_dashboard.collector import Snapshot, collect, container_logs
-from storm_vps_dashboard.config import load_config
+from storm_vps_dashboard.config import VPSConfig, load_hosts
 
 
 def _status_badge(status: str, state: str) -> str:
@@ -106,18 +106,31 @@ def run() -> None:
     sys.exit(subprocess.call(cmd))
 
 
-def main() -> None:
-    st.set_page_config(
-        page_title="Storm VPS Dashboard",
-        page_icon="🌪️",
-        layout="wide",
-    )
-    st.title("🌪️ Storm VPS Dashboard")
+def _landing(hosts: dict[str, VPSConfig]) -> None:
+    """Tela de seleção quando há múltiplos VPS configurados."""
+    st.subheader("Escolha o VPS pra abrir")
+    st.caption(f"{len(hosts)} hosts configurados. A escolha fica na URL (bookmarkável).")
+    cols = st.columns(min(len(hosts), 3))
+    for idx, (name, cfg) in enumerate(hosts.items()):
+        with cols[idx % len(cols)]:
+            with st.container(border=True):
+                st.markdown(f"### {cfg.label}")
+                st.caption(f"`{cfg.user}@{cfg.host}:{cfg.port}`")
+                if st.button("Abrir dashboard", key=f"open_{name}", width="stretch"):
+                    st.query_params["vps"] = name
+                    st.rerun()
 
-    cfg = load_config()
+
+def _dashboard(cfg: VPSConfig, hosts: dict[str, VPSConfig]) -> None:
+    """Dashboard de um VPS específico."""
+    st.title(f"🌪️ {cfg.label}")
+
     with st.sidebar:
         st.markdown(f"**Host:** `{cfg.user}@{cfg.host}:{cfg.port}`")
         st.markdown(f"**Chave:** `{cfg.key_path}`")
+        if len(hosts) > 1 and st.button("← Trocar VPS", width="stretch"):
+            st.query_params.clear()
+            st.rerun()
         auto = st.toggle("Auto-refresh 30s", value=False)
         if st.button("Refresh agora", width="stretch"):
             st.rerun()
@@ -136,6 +149,34 @@ def main() -> None:
     if auto:
         time.sleep(30)
         st.rerun()
+
+
+def main() -> None:
+    st.set_page_config(
+        page_title="Storm VPS Dashboard",
+        page_icon="🌪️",
+        layout="wide",
+    )
+
+    try:
+        hosts = load_hosts()
+    except Exception as e:
+        st.title("🌪️ Storm VPS Dashboard")
+        st.error(f"Configuração inválida: {e}")
+        st.stop()
+
+    # Host único: pula a landing e vai direto (compat com setup legacy).
+    if len(hosts) == 1:
+        cfg = next(iter(hosts.values()))
+        _dashboard(cfg, hosts)
+        return
+
+    selected = st.query_params.get("vps")
+    if selected and selected in hosts:
+        _dashboard(hosts[selected], hosts)
+    else:
+        st.title("🌪️ Storm VPS Dashboard")
+        _landing(hosts)
 
 
 if __name__ == "__main__":
