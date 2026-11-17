@@ -71,17 +71,16 @@ class DockerSystemDf:
 @contextmanager
 def _client(cfg: VPSConfig) -> Iterator[paramiko.SSHClient]:
     c = paramiko.SSHClient()
-    skip_host_key = os.environ.get("VPS_SKIP_HOST_KEY_CHECK") == "1"
-    if skip_host_key:
+    if cfg.skip_host_key:
         # Escape hatch só pro loopback via docker extra_hosts: o watchdog
         # roda dentro do container e `host.docker.internal` não entra em
         # known_hosts. Permitir skip em qualquer outro host apagaria a
         # autenticação de servidor do SSH silenciosamente.
         if cfg.host != "host.docker.internal":
             raise RuntimeError(
-                f"VPS_SKIP_HOST_KEY_CHECK=1 só é permitido com "
+                f"skip_host_key=True só é permitido com "
                 f"host=host.docker.internal, recebeu host={cfg.host!r}. "
-                "Remova a env ou corrija o VPS_HOST."
+                "Remova a flag do .env (VPS_<NOME>_SKIP_HOST_KEY_CHECK)."
             )
         c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     else:

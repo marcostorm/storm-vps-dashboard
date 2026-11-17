@@ -15,6 +15,7 @@ class VPSConfig:
     user: str
     port: int
     key_path: Path
+    skip_host_key: bool = False
 
 
 def load_hosts() -> dict[str, VPSConfig]:
@@ -51,7 +52,17 @@ def _load_prefixed(name: str) -> VPSConfig:
     key_path = Path(
         os.environ.get(prefix + "KEY_PATH", "~/.ssh/id_ed25519")
     ).expanduser()
-    return VPSConfig(name=name, label=label, host=host, user=user, port=port, key_path=key_path)
+    # skip host key check é opt-in por host (default: False, exige known_hosts).
+    # Fallback pra VPS_SKIP_HOST_KEY_CHECK global quando não setado por host.
+    skip = (
+        os.environ.get(prefix + "SKIP_HOST_KEY_CHECK")
+        or os.environ.get("VPS_SKIP_HOST_KEY_CHECK")
+        or "0"
+    ) == "1"
+    return VPSConfig(
+        name=name, label=label, host=host, user=user,
+        port=port, key_path=key_path, skip_host_key=skip,
+    )
 
 
 def _load_legacy() -> VPSConfig:
@@ -64,4 +75,8 @@ def _load_legacy() -> VPSConfig:
     port = int(os.environ.get("VPS_PORT", "22"))
     key_path = Path(os.environ.get("VPS_KEY_PATH", "~/.ssh/id_ed25519")).expanduser()
     label = os.environ.get("VPS_LABEL", host)
-    return VPSConfig(name="default", label=label, host=host, user=user, port=port, key_path=key_path)
+    skip = os.environ.get("VPS_SKIP_HOST_KEY_CHECK") == "1"
+    return VPSConfig(
+        name="default", label=label, host=host, user=user,
+        port=port, key_path=key_path, skip_host_key=skip,
+    )
